@@ -20,11 +20,14 @@
 
 
 #include<iostream>
+#include <sstream>
 #include<algorithm>
 #include<fstream>
 #include<chrono>
 
 #include<ros/ros.h>
+#include <std_msgs/String.h>
+
 #include <cv_bridge/cv_bridge.h>
 #include <message_filters/subscriber.h>
 #include <message_filters/time_synchronizer.h>
@@ -32,6 +35,8 @@
 
 #include<opencv2/core/core.hpp>
 
+
+#include"../../../include/Converter.h"
 #include"../../../include/System.h"
 
 using namespace std;
@@ -44,6 +49,7 @@ public:
     void GrabRGBD(const sensor_msgs::ImageConstPtr& msgRGB,const sensor_msgs::ImageConstPtr& msgD);
 
     ORB_SLAM2::System* mpSLAM;
+    ros::Publisher pose_pub;
 };
 
 int main(int argc, char **argv)
@@ -64,6 +70,8 @@ int main(int argc, char **argv)
     ImageGrabber igb(&SLAM);
 
     ros::NodeHandle nh;
+
+    igb.pose_pub = nh.advertise<std_msgs::String>("pose", 1000);
 
     message_filters::Subscriber<sensor_msgs::Image> rgb_sub(nh, "/camera/rgb/image_raw", 1);
     message_filters::Subscriber<sensor_msgs::Image> depth_sub(nh, "camera/depth_registered/image_raw", 1);
@@ -109,7 +117,21 @@ void ImageGrabber::GrabRGBD(const sensor_msgs::ImageConstPtr& msgRGB,const senso
         return;
     }
 
-    mpSLAM->TrackRGBD(cv_ptrRGB->image,cv_ptrD->image,cv_ptrRGB->header.stamp.toSec());
+    cv::Mat Tcw = mpSLAM->TrackRGBD(cv_ptrRGB->image,cv_ptrD->image,cv_ptrRGB->header.stamp.toSec());
+
+    if (!Tcw.empty()) {
+        cv::Mat Rwc = Tcw.rowRange(0,3).colRange(0,3).t();
+        cv::Mat twc = -Rwc*Tcw.rowRange(0,3).col(3);
+
+        vector<float> q = ORB_SLAM2::Converter::toQuaternion(Rwc);
+
+        stringstream os;
+        os << setprecision(17) << cv_ptrRGB->header.stamp.toSec() << " " << setprecision(9) << twc.at<float>(0) << " " << twc.at<float>(1) << " " << twc.at<float>(2) << " " << q[0] << " " << q[1] << " " << q[2] << " " << q[3];
+
+        pose_pub.publish(os.str());
+        // std::cout << os.str() << std::endl;
+    
+    }
 }
 
 
